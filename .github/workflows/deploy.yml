@@ -2,19 +2,21 @@ name: wxread
 
 concurrency:
   group: ${{ github.workflow }} # 使用工作流名称作为并发组的key
-  cancel-in-progress: true    # 取消任何正在进行的相同并发组的工作流
+  cancel-in-progress: false   # 补偿调度排队，不能打断正在进行的阅读
 
 on:
   schedule:
     # 凌晨任务：北京时间每天 01:37（UTC 前一天 17:37），避开整点高峰
     - cron: '37 17 * * *'
-    # 早间任务：北京时间每天 05:00（UTC 前一天 21:00）
-    #- cron: '0 21 * * *'
-    # 午间任务：北京时间每天 11:40（UTC 03:40）
-    #- cron: '40 3 * * *'
-    # 晚间任务：北京时间每天 22:00（UTC 14:00）
-    #- cron: '0 14 * * *'
-  workflow_dispatch:  # 手动触发
+    # 补偿检查：北京时间 05:47 / 11:47 / 18:47；当天已读完则跳过
+    - cron: '47 21,3,10 * * *'
+  workflow_dispatch:  # 手动触发也遵守当天完成去重
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/deploy.yml'
+      - '.github/scripts/daily_guard.py'
+      - '.github/tests/test_daily_guard.py'
 
 jobs:
   deploy:
@@ -22,11 +24,6 @@ jobs:
     environment: AutoRead  # 指定环境
 
     steps:
-
-    - name: Set DNS to Google's DNS
-      run: |
-        echo "nameserver 8.8.8.8" | sudo tee /etc/resolv.conf
-        echo "nameserver 8.8.4.4" | sudo tee -a /etc/resolv.conf
 
     - name: Checkout repository
       uses: actions/checkout@v2
@@ -36,12 +33,28 @@ jobs:
       with:
         python-version: '3.10'
 
+    - name: Test daily guard
+      run: python -m unittest discover -s .github/tests -v
+
+    - name: Check today's completion
+      id: daily_guard
+      if: ${{ github.event_name != 'push' }}
+      run: python .github/scripts/daily_guard.py
+
+    - name: Set DNS to Google's DNS
+      if: ${{ steps.daily_guard.outputs.should_run == 'true' }}
+      run: |
+        echo "nameserver 8.8.8.8" | sudo tee /etc/resolv.conf
+        echo "nameserver 8.8.4.4" | sudo tee -a /etc/resolv.conf
+
     - name: Install dependencies
+      if: ${{ steps.daily_guard.outputs.should_run == 'true' }}
       run: |
         python -m pip install --upgrade pip
         pip install certifi==2024.8.30 charset-normalizer==3.4.0 idna==3.10 requests==2.32.3 urllib3==2.2.3
 
     - name: Run deployment script
+      if: ${{ steps.daily_guard.outputs.should_run == 'true' }}
       env:
         WXREAD_CURL_BASH: ${{ secrets.WXREAD_CURL_BASH }}
         PUSH_METHOD: ${{ secrets.PUSH_METHOD }}
@@ -57,10 +70,11 @@ jobs:
 
   keepalive-job:
     name: Keepalive Workflow
-    if: ${{ always() }}
+    if: ${{ always() && github.event_name != 'push' }}
     needs: deploy
     runs-on: ubuntu-latest
     permissions:
       actions: write
     steps:
       - uses: liskin/gh-workflow-keepalive@v1.2.1
+
