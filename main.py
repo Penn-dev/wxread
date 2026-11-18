@@ -40,17 +40,18 @@ def cal_hash(input_string):
 
 def get_wr_skey():
     """刷新cookie密钥"""
-    for cookie_data in COOKIE_DATA_VARIANTS:
+    for attempt, cookie_data in enumerate(COOKIE_DATA_VARIANTS, start=1):
         try:
             response = requests.post(RENEW_URL,headers=headers,cookies=cookies,data=json.dumps(cookie_data, separators=(',', ':')),timeout=10)
             
             if 'wr_skey' in response.cookies:
                 return response.cookies['wr_skey'][:8]
-            else:
-                continue
+            logging.warning(
+                "refresh_cookie 未收到预期 Cookie：attempt=%d http_status=%d redirects=%d",
+                attempt, response.status_code, len(response.history),
+            )
         except requests.RequestException as exc:
-            logging.warning(f"refresh_cookie 请求失败，payload={cookie_data}，原因：{exc}")
-            continue
+            logging.warning("refresh_cookie 请求异常：attempt=%d error_type=%s", attempt, type(exc).__name__)
         
         
     return None
