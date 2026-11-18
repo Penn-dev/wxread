@@ -38,6 +38,29 @@ def cal_hash(input_string):
 
     return hex(_7032f5 + _cc1055)[2:].lower()
 
+def renewal_response_kind(response):
+    media = response.headers.get("Content-Type", "").split(";", 1)[0].strip().lower()
+    if media in ("text/html", "application/xhtml+xml"):
+        return "html"
+    if len(response.content) > 16384:
+        return "large"
+    try:
+        body = response.json()
+    except ValueError:
+        return "non_json"
+    if not isinstance(body, dict):
+        return "json_non_object"
+    for key in ("errCode", "errcode", "errorCode", "code"):
+        if key in body:
+            value = body[key]
+            if type(value) in (int, str) and value in (-2013, "-2013"):
+                return "json_known_-2013"
+            if type(value) in (int, str) and value in (0, "0"):
+                return "json_code_0"
+            return "json_other_code"
+    return "json_no_code"
+
+
 def get_wr_skey():
     """刷新cookie密钥"""
     for attempt, cookie_data in enumerate(COOKIE_DATA_VARIANTS, start=1):
@@ -47,8 +70,8 @@ def get_wr_skey():
             if 'wr_skey' in response.cookies:
                 return response.cookies['wr_skey'][:8]
             logging.warning(
-                "refresh_cookie 未收到预期 Cookie：attempt=%d http_status=%d redirects=%d",
-                attempt, response.status_code, len(response.history),
+                "refresh_cookie 未收到预期 Cookie：attempt=%d http_status=%d redirects=%d response_kind=%s",
+                attempt, response.status_code, len(response.history), renewal_response_kind(response),
             )
         except requests.RequestException as exc:
             logging.warning("refresh_cookie 请求异常：attempt=%d error_type=%s", attempt, type(exc).__name__)
